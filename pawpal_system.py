@@ -101,10 +101,12 @@ class Owner:
 class Schedule:
     """An ordered daily plan of tasks for one pet."""
 
-    def __init__(self, pet: Pet, date: datetime.date = None):
+    def __init__(self, owner: Owner, pet: Pet, date: datetime.date = None):
+        self.owner = owner
         self.pet = pet
         self.date: datetime.date = date or datetime.date.today()
         self.planned_tasks: list[Task] = []
+        self.skipped_tasks: list[Task] = []   # tasks excluded due to time/conflict
 
     def add_task(self, task: Task) -> None:
         """Append a task to the plan."""
