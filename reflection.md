@@ -50,9 +50,7 @@ The system is built around five classes:
 
 - **`Scheduler`** — the algorithm class. Takes an `Owner` and `Pet`, collects today's tasks, sorts by priority, greedily fills the time budget, detects time conflicts, and returns a populated `Schedule`. `explain_reasoning()` produces a plain-English summary of decisions made.
 
-**c. Initial design (Step 3)**
-
-The system uses five classes: `Owner`, `Pet`, `Task`, `Schedule`, and `Scheduler`. `Owner` holds one or more `Pet` objects; each `Pet` owns a list of `Task` objects. `Scheduler` reads from `Owner` and `Pet` to produce a `Schedule`, which is an ordered, time-constrained plan of `Task` objects for a given day. `Scheduler` is intentionally separate from `Schedule` so that the algorithm logic is decoupled from the data it outputs.
+**c. Final UML diagram (updated in Phase 6 to match implementation)**
 
 ```mermaid
 classDiagram
@@ -87,26 +85,31 @@ classDiagram
         +bool is_recurring
         +list[str] recurrence_days
         +bool is_completed
+        +date next_due_date
         +mark_complete()
         +is_due_today() bool
+        +_next_occurrence() date
         +__lt__(other: Task) bool
     }
 
     class Schedule {
-        +date date
+        +Owner owner
         +Pet pet
+        +date date
         +list[Task] planned_tasks
-        +int total_duration_minutes
+        +list[Task] skipped_tasks
         +add_task(task: Task)
         +remove_task(task: Task)
         +get_total_duration() int
-        +display()
+        +display() str
     }
 
     class Scheduler {
         +Owner owner
         +Pet pet
         +sort_by_priority(tasks: list) list[Task]
+        +sort_by_time(tasks: list) list[Task]
+        +filter_tasks(tasks, completed, task_type) list[Task]
         +detect_conflicts(tasks: list) list[tuple]
         +generate_plan() Schedule
         +explain_reasoning() str
@@ -117,9 +120,12 @@ classDiagram
     Scheduler --> Owner : reads
     Scheduler --> Pet : reads
     Scheduler --> Schedule : creates
+    Schedule --> Owner : references
     Schedule --> Pet : for
     Schedule "1" --> "0..*" Task : contains
 ```
+
+Changes from initial design: `Task` gained `next_due_date` and `_next_occurrence()`; `Schedule` gained `skipped_tasks` and an `Owner` reference; `Scheduler` gained `sort_by_time()` and `filter_tasks()`.
 
 **b. Design changes (Step 5)**
 
@@ -155,13 +161,20 @@ However, the detector still only fires for tasks that have a `preferred_time` se
 
 **a. How you used AI**
 
-- How did you use AI tools during this project (for example: design brainstorming, debugging, refactoring)?
-- What kinds of prompts or questions were most helpful?
+AI assistance was used throughout every phase of the project:
+
+- **Design brainstorming (Phase 1–2):** AI helped identify the five core classes and their relationships by asking structured questions about what the system needed to *know* vs. what it needed to *do*. The most useful prompt pattern was "given this scenario, what objects would you model and why?" — it produced a starting design that was close to the final one.
+- **Skeleton generation (Phase 2):** AI converted the UML description into Python class stubs with `@dataclass` decorators, correct type hints, and method signatures. This saved significant boilerplate time and immediately made the code feel structured.
+- **Algorithm review (Phase 4):** Prompts like "review this method for missing edge cases" surfaced the `skipped_tasks` gap and the weakness of exact-time conflict detection before any bugs appeared in testing.
+- **Test generation (Phase 5):** Prompts focused on edge cases ("what happens if every task exceeds the budget?" "what if the pet has no tasks?") produced tests that covered failure modes that were easy to overlook.
+
+The most effective prompt pattern throughout was providing the existing code as context and asking "what is missing or could go wrong?" rather than "write me X feature."
 
 **b. Judgment and verification**
 
-- Describe one moment where you did not accept an AI suggestion as-is.
-- How did you evaluate or verify what the AI suggested?
+The most important moment of non-acceptance was with the initial conflict detection design. The first AI suggestion used exact `preferred_time` string equality (`a.preferred_time == b.preferred_time`) to detect conflicts. This was rejected because it misses the most common real-world case: two tasks that start at *different* times but still overlap (e.g., a 10-minute feeding at 07:30 and a 5-minute medication at 07:35 share 5 minutes of the same window).
+
+The suggestion was evaluated by manually tracing through a concrete example: Breakfast at 07:30 for 10 minutes ends at 07:40. If supplement is at 07:35, the two tasks are simultaneous for 5 minutes. Exact-match comparison would silently miss this. The replacement — interval intersection using `[start, start + duration)` — was verified correct by running the updated conflict test with overlapping but not equal start times, confirming it caught the case.
 
 ---
 
@@ -169,13 +182,27 @@ However, the detector still only fires for tasks that have a `preferred_time` se
 
 **a. What you tested**
 
-- What behaviors did you test?
-- Why were these tests important?
+The 27-test suite covers five main behaviour groups:
+
+1. **Task state transitions** — `mark_complete()` sets `is_completed` for non-recurring tasks but advances `next_due_date` for recurring ones, keeping the task active. `is_due_today()` correctly reflects both states.
+2. **Pet task management** — task count increases on `add_task()`; completed tasks are excluded from `get_tasks_due_today()`.
+3. **Owner management** — back-references are set, multiple pets are tracked, and the time budget updates correctly.
+4. **Scheduler algorithms** — priority ordering is respected; the time budget cap is never exceeded; `sort_by_time()` returns chronological order with untimed tasks last; `filter_tasks()` works by type and by status.
+5. **Conflict detection** — partial overlaps are caught; non-overlapping tasks produce no false positives; untimed tasks are correctly ignored.
+
+These tests were important because the scheduler's correctness is not visible to the user unless it fails dramatically. A subtle bug (wrong priority order, conflict missed) would silently produce a bad plan. Tests make the implicit contract of each method explicit and machine-verifiable.
 
 **b. Confidence**
 
-- How confident are you that your scheduler works correctly?
-- What edge cases would you test next if you had more time?
+Confidence level: **4 / 5**
+
+The core scheduling logic — priority ordering, time budget enforcement, recurring rescheduling, and conflict detection — is fully covered and all 27 tests pass. Confidence is not at 5 because:
+
+- The Streamlit UI (`app.py`) is untested. A user interaction bug (e.g., session state not persisting correctly across tab switches) would not be caught.
+- Multi-pet scenarios (two pets sharing one owner's time budget) are not tested at all; the current system schedules each pet independently.
+- Edge cases like tasks with identical priority *and* identical preferred time have not been explicitly tested to confirm consistent ordering.
+
+Next tests to add: UI integration tests using Streamlit's testing library; a test for the multi-pet shared budget scenario; a test confirming stable sort order for equal-priority, equal-time tasks.
 
 ---
 
@@ -183,12 +210,12 @@ However, the detector still only fires for tasks that have a `preferred_time` se
 
 **a. What went well**
 
-- What part of this project are you most satisfied with?
+The most satisfying part of the project was the clean separation between the logic layer (`pawpal_system.py`) and the UI layer (`app.py`). Because `Scheduler`, `Schedule`, and `Task` were designed and tested independently of Streamlit, every feature could be verified in the terminal with `main.py` or `pytest` before touching the UI. This meant the UI phase was mostly "wiring" rather than debugging, and bugs were easy to isolate. The architecture held up across all four implementation phases without needing a major redesign.
 
 **b. What you would improve**
 
-- If you had another iteration, what would you improve or redesign?
+The biggest design limitation is that the scheduler treats each pet independently. A more realistic system would have a single `DailyPlanner` that schedules tasks across all of an owner's pets simultaneously, detecting cross-pet time conflicts (e.g., you can't walk Buddy and give Luna her medication at 08:00 at the same time). This would require a more complex algorithm — probably interval scheduling rather than a greedy single-pass — and would make the conflict detection and time-budget logic significantly more powerful.
 
 **c. Key takeaway**
 
-- What is one important thing you learned about designing systems or working with AI on this project?
+The most important lesson from this project is that AI is most valuable as a *reviewer and edge-case finder*, not as a code generator. The generated code was often a good starting point, but the real quality improvements came from prompting AI to look for what was *missing* — the `skipped_tasks` list, the `Owner` reference on `Schedule`, the overlap-based conflict detection. Being the lead architect means treating AI output as a first draft to critique, not a finished solution to accept. Every suggestion that was rejected or modified produced a cleaner, more honest design than the original.

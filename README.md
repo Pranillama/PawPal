@@ -1,26 +1,30 @@
-# PawPal+ (Module 2 Project)
+# PawPal+ 🐾
 
-You are building **PawPal+**, a Streamlit app that helps a pet owner plan care tasks for their pet.
+**PawPal+** is a smart pet care scheduling app built with Python and Streamlit. It helps busy pet owners stay consistent with their pet's daily care by generating a prioritised, conflict-aware daily plan from a list of tasks.
+
+## Features
+
+| Feature | Description |
+|---|---|
+| **Owner + multi-pet setup** | Create an owner profile with a daily time budget, then add any number of pets with health notes. |
+| **Task management** | Add tasks with type, duration, priority (1–5), optional preferred time, and optional recurrence days. Filter tasks by type or completion status. |
+| **Priority-first scheduling** | The daily plan is built greedily — highest priority tasks are scheduled first until the time budget is exhausted. Skipped tasks are displayed with an explanation. |
+| **Time-based sorting** | The schedule can be viewed in priority order or chronological order. Untimed tasks are always placed last. |
+| **Recurring task rescheduling** | Completing a recurring task does not permanently close it. The next due date is automatically calculated using `timedelta` — daily tasks reschedule to tomorrow, weekly-pattern tasks find the next matching weekday. |
+| **Conflict detection** | Overlapping time windows (`[start, start + duration)`) are detected and shown as prominent error banners before the plan, with specific overlap details. |
+| **Scheduling reasoning** | An expandable "How was this schedule built?" section explains the algorithm's decisions in plain English. |
+
+## 📸 Demo
+
+> Add a screenshot here after launching the app. Use `streamlit run app.py` to start it.
 
 ## Scenario
 
-A busy pet owner needs help staying consistent with pet care. They want an assistant that can:
+A busy pet owner needs help staying consistent with pet care. PawPal+ helps them:
 
 - Track pet care tasks (walks, feeding, meds, enrichment, grooming, etc.)
 - Consider constraints (time available, priority, owner preferences)
 - Produce a daily plan and explain why it chose that plan
-
-Your job is to design the system first (UML), then implement the logic in Python, then connect it to the Streamlit UI.
-
-## What you will build
-
-Your final app should:
-
-- Let a user enter basic owner + pet info
-- Let a user add/edit tasks (duration + priority at minimum)
-- Generate a daily schedule/plan based on constraints and priorities
-- Display the plan clearly (and ideally explain the reasoning)
-- Include tests for the most important scheduling behaviors
 
 ## Testing PawPal+
 
