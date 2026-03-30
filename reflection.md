@@ -135,13 +135,19 @@ During review of the skeleton, two gaps were identified and fixed:
 
 **a. Constraints and priorities**
 
-- What constraints does your scheduler consider (for example: time, priority, preferences)?
-- How did you decide which constraints mattered most?
+The scheduler considers three constraints:
+
+1. **Daily time budget** (`owner.available_minutes_per_day`) — the hard ceiling. No plan can exceed it.
+2. **Task priority** (1–5 scale) — the primary sort key. Higher-priority tasks (medications, feedings) are always scheduled before lower-priority ones (grooming, enrichment).
+3. **Preferred time** (`task.preferred_time`) — a secondary sort key used to break ties between tasks of equal priority and to detect scheduling conflicts.
+
+Priority was chosen as the primary constraint because a pet's health needs (medication, feeding) should never be dropped in favour of optional activities regardless of time. Time budget is the hard constraint that determines what gets skipped, not priority.
 
 **b. Tradeoffs**
 
-- Describe one tradeoff your scheduler makes.
-- Why is that tradeoff reasonable for this scenario?
+The conflict detector compares time windows as `[start, start + duration)` intervals. This is more accurate than a simple exact-time-match check — for example, it correctly flags "Breakfast feeding" (07:30–07:40) conflicting with "Joint supplement" (07:35–07:40) even though they start at different times.
+
+However, the detector still only fires for tasks that have a `preferred_time` set. Tasks without a preferred time are inserted into the plan without any time-slot awareness. A more sophisticated scheduler would assign concrete start times to every task and detect conflicts across the full timeline. The tradeoff is worth making here because assigning times to untimed tasks would require additional user input (or assumptions about the owner's day structure) that PawPal+ does not currently collect. Exact-window conflict detection on explicitly timed tasks catches the most important cases — overlapping medications or feedings — without burdening the user with mandatory time entry for every activity.
 
 ---
 

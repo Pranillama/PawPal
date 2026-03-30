@@ -11,6 +11,16 @@ from typing import Optional
 
 
 # ---------------------------------------------------------------------------
+# Module-level helper
+# ---------------------------------------------------------------------------
+
+def _time_to_minutes(time_str: str) -> int:
+    """Convert an 'HH:MM' string to minutes since midnight."""
+    h, m = map(int, time_str.split(":"))
+    return h * 60 + m
+
+
+# ---------------------------------------------------------------------------
 # Task
 # ---------------------------------------------------------------------------
 
@@ -26,17 +36,53 @@ class Task:
     is_recurring: bool = False
     recurrence_days: list[str] = field(default_factory=list)  # e.g. ["Mon", "Wed", "Fri"]
     is_completed: bool = False
+    next_due_date: Optional[datetime.date] = None  # set after completing a recurring task
 
     def mark_complete(self) -> None:
-        """Set this task's completion status to True."""
-        self.is_completed = True
+        """Mark task done; recurring tasks auto-reschedule to their next occurrence."""
+        if self.is_recurring:
+            # Advance the next due date instead of permanently completing
+            self.next_due_date = self._next_occurrence()
+            # is_completed stays False — the task recurs
+        else:
+            self.is_completed = True
 
     def is_due_today(self) -> bool:
-        """Return True if the task should appear in today's schedule."""
-        if not self.is_recurring:
-            return True
-        today_abbr = datetime.date.today().strftime("%a")  # "Mon", "Tue", …
-        return today_abbr in self.recurrence_days
+        """Return True if this task should appear in today's schedule."""
+        today = datetime.date.today()
+
+        if self.is_completed:
+            # Non-recurring tasks permanently done
+            return False
+
+        if self.is_recurring:
+            if self.next_due_date is not None:
+                # Recurring task was completed — check if next occurrence has arrived
+                return today >= self.next_due_date
+            # Never completed yet — check by weekday
+            return today.strftime("%a") in self.recurrence_days
+
+        # One-off task that hasn't been completed
+        return True
+
+    def _next_occurrence(self) -> datetime.date:
+        """Calculate the next date this recurring task falls due."""
+        today = datetime.date.today()
+        all_days = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
+
+        # Daily (every day of the week) → tomorrow
+        if set(self.recurrence_days) >= all_days:
+            return today + datetime.timedelta(days=1)
+
+        # Weekly-ish — find nearest future weekday in recurrence_days
+        weekday_map = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3,
+                       "Fri": 4, "Sat": 5, "Sun": 6}
+        today_num = today.weekday()
+        deltas = []
+        for day in self.recurrence_days:
+            delta = (weekday_map[day] - today_num) % 7
+            deltas.append(delta if delta > 0 else 7)  # 0 means today → next week
+        return today + datetime.timedelta(days=min(deltas))
 
     def __lt__(self, other: Task) -> bool:
         """Higher priority value sorts first (descending order)."""
@@ -67,8 +113,8 @@ class Pet:
         return list(self._tasks)
 
     def get_tasks_due_today(self) -> list[Task]:
-        """Return incomplete tasks that are due today."""
-        return [t for t in self._tasks if t.is_due_today() and not t.is_completed]
+        """Return tasks that are due today and not permanently completed."""
+        return [t for t in self._tasks if t.is_due_today()]
 
 
 # ---------------------------------------------------------------------------
@@ -167,17 +213,56 @@ class Scheduler:
         self.pet = pet
 
     def sort_by_priority(self, tasks: list[Task]) -> list[Task]:
-        """Return a new list of tasks sorted by priority, highest first."""
+        """Return tasks sorted by priority (highest first)."""
         return sorted(tasks)
 
+    def sort_by_time(self, tasks: list[Task]) -> list[Task]:
+        """Return tasks sorted by preferred_time (earliest first); untimed tasks go last."""
+        return sorted(
+            tasks,
+            key=lambda t: _time_to_minutes(t.preferred_time) if t.preferred_time else float("inf"),
+        )
+
+    def filter_tasks(
+        self,
+        tasks: list[Task],
+        completed: Optional[bool] = None,
+        task_type: Optional[str] = None,
+    ) -> list[Task]:
+        """
+        Filter a task list by completion status and/or task type.
+
+        Args:
+            tasks:      Source list to filter.
+            completed:  True → completed only, False → incomplete only, None → no filter.
+            task_type:  E.g. 'walk', 'feeding'; None means no filter.
+        """
+        result = tasks
+        if completed is not None:
+            result = [t for t in result if t.is_completed == completed]
+        if task_type is not None:
+            result = [t for t in result if t.task_type == task_type]
+        return result
+
     def detect_conflicts(self, tasks: list[Task]) -> list[tuple[Task, Task]]:
-        """Return pairs of tasks that share the same preferred time slot."""
+        """
+        Return pairs of tasks whose scheduled time windows overlap.
+
+        Two tasks conflict when their [start, start + duration) intervals intersect.
+        Only tasks with a preferred_time are evaluated.
+        """
         conflicts = []
         timed = [t for t in tasks if t.preferred_time]
         for i in range(len(timed)):
             for j in range(i + 1, len(timed)):
-                if timed[i].preferred_time == timed[j].preferred_time:
-                    conflicts.append((timed[i], timed[j]))
+                a, b = timed[i], timed[j]
+                a_start = _time_to_minutes(a.preferred_time)
+                a_end   = a_start + a.duration_minutes
+                b_start = _time_to_minutes(b.preferred_time)
+                b_end   = b_start + b.duration_minutes
+                # Intervals overlap when neither ends before the other starts
+                if a_start < b_end and b_start < a_end:
+                    conflicts.append((a, b))
         return conflicts
 
     def generate_plan(self) -> Schedule:
@@ -186,15 +271,24 @@ class Scheduler:
 
         Algorithm:
         1. Collect incomplete tasks due today from the pet.
-        2. Sort by priority (highest first).
+        2. Sort by priority (highest first); break ties by preferred_time (earliest first).
         3. Greedily add tasks until the owner's time budget is exhausted.
         4. Record leftover tasks in skipped_tasks.
         """
         schedule = Schedule(owner=self.owner, pet=self.pet)
-        tasks = self.sort_by_priority(self.pet.get_tasks_due_today())
+
+        # Primary: priority (highest first); secondary: time (earliest first)
+        tasks = self.pet.get_tasks_due_today()
+        tasks = sorted(
+            tasks,
+            key=lambda t: (
+                -t.priority,
+                _time_to_minutes(t.preferred_time) if t.preferred_time else float("inf"),
+            ),
+        )
+
         budget = self.owner.available_minutes_per_day
         used = 0
-
         for task in tasks:
             if used + task.duration_minutes <= budget:
                 schedule.add_task(task)
@@ -215,14 +309,18 @@ class Scheduler:
             f"  Tasks scheduled : {len(schedule.planned_tasks)} ({schedule.get_total_duration()} min used)",
             f"  Tasks skipped   : {len(schedule.skipped_tasks)}",
             "",
-            "  Tasks were sorted by priority (highest first). The scheduler added each",
-            "  task greedily until the daily time budget was exhausted.",
+            "  Tasks were sorted by priority (highest first), with ties broken by",
+            "  preferred time (earliest first). The scheduler added each task",
+            "  greedily until the daily time budget was exhausted.",
         ]
 
         conflicts = self.detect_conflicts(schedule.planned_tasks)
         if conflicts:
             lines.append(f"\n  Warning — {len(conflicts)} time conflict(s) detected:")
             for a, b in conflicts:
-                lines.append(f"    '{a.title}' and '{b.title}' both prefer {a.preferred_time}")
+                lines.append(
+                    f"    '{a.title}' ({a.preferred_time}–{_time_to_minutes(a.preferred_time) + a.duration_minutes} min) "
+                    f"overlaps '{b.title}' ({b.preferred_time})"
+                )
 
         return "\n".join(lines)
